@@ -1,0 +1,281 @@
+---
+title: "Marketing_analysis_starbucksdata"
+output: pdf_document
+date: "2022-12-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+```
+# Reading dataset preprocessed by joining three json files
+```{r}
+data<-read.csv("C:/Users/tushi/Downloads/raw_data.csv")
+```
+
+#Filtering data for generating meaniungful plots
+```{r}
+dataset3<-filter(data,age<100)
+dataset1<-filter(dataset3, offer_type == "bogo")
+dataset2<-filter(dataset3, offer_type == "discount")
+```
+
+#Plots generation
+```{r}
+ggplot(dataset3, aes(x=gender)) +
+  geom_bar(position="dodge")+
+  labs(title="Histogram of gender of customers") +
+  theme_minimal()
+```
+```{r}
+ggplot(dataset3, aes(x=age)) +
+  geom_bar(position="dodge")+
+  labs(title="Histogram of age of customers") +
+  theme_minimal()
+```
+```{r}
+ggplot(dataset3, aes(x=offer_type)) +
+  geom_bar(position="dodge")+
+  labs(title="Distribution of offer type sent to customers") +
+  theme_minimal()
+```
+```{r}
+ggplot(dataset3, aes(x=offer_type, fill=as.factor(Customer_response))) +
+  geom_bar(position="dodge") + scale_fill_discrete(name="Customer_response") +
+  facet_wrap(~gender) +
+  labs(title="Distribution of traget variable for combination of difficulty and offer type",
+       x="Offer type", y="count") +
+  theme_minimal()
+```
+
+
+# Conducting a/b testing
+
+
+```{r}
+dataset_testing=filter(dataset3,difficulty==10,duration==7)
+```
+```{r}
+data_sum <- dataset_testing %>%
+  group_by(offer_type, duration)%>%
+  summarize(acceptance_rate = mean(Customer_response))
+data_sum
+```
+```{r}
+# plot of conversion rates over time
+ggplot(data_sum,
+       aes(x = duration,
+           y = acceptance_rate,
+           color = offer_type,
+           group = offer_type)) +
+  geom_point() +
+  geom_line()+
+labs(x = "Duration",
+       y = "Acceptance Rate")
+```
+# Calculating acceptance rate for offer type
+```{r}
+dataset_testing %>%
+  group_by(offer_type) %>%
+  summarize(acceptance_rate = mean(Customer_response))
+```
+# Fitting glm to the data
+
+```{r}
+library(broom)
+results <- glm(Customer_response ~ offer_type,
+                          family = "binomial",
+                          data = dataset_testing)%>%tidy()
+results
+```
+# Getting acceptance rate for groups of diifuclty and offer type
+```{r}
+data_sum_multi <- data %>%
+  group_by(offer_type, difficulty)%>%
+  summarize(acceptance_rate = mean(Customer_response))
+data_sum_multi
+
+```
+
+# Profile plot
+
+```{r}
+ggplot(data_sum_multi,
+       aes(x = as.factor(difficulty),
+           y = acceptance_rate,
+           color = offer_type,
+           group = offer_type)) +
+  geom_point() +
+  geom_line()+
+labs(x = "Difficulty",
+       y = "Acceptance Rate")
+```
+
+# Performing randomize sampling on the data
+
+
+```{r}
+bogo_5=filter(data,offer_type=="bogo",difficulty==5)
+bogo_10=filter(data,offer_type=="bogo",difficulty==10)
+discount_7=filter(data,offer_type=="discount",difficulty==7)
+discount_10=filter(data,offer_type=="discount",difficulty==10)
+discount_20=filter(data,offer_type=="discount",difficulty==20)
+
+```
+
+
+```{r}
+data_randomized=rbind(sample_n(bogo_5,6000,replace=TRUE),sample_n(bogo_10,6000,replace=TRUE),               sample_n(discount_7,6000,replace=TRUE),sample_n(discount_10,6000,replace=TRUE),sample_n(discount_20,6000,replace=TRUE))
+```
+```{r}
+# Randomization
+c<-data_randomized%>%group_by(offer_type,difficulty)%>%
+  summarize(acceptance_rate = mean(Customer_response),Impressions=n())
+c
+```
+# generating profile plot on randomized data
+```{r}
+ggplot(c,
+       aes(x = difficulty,
+           y = acceptance_rate,
+           color = offer_type,
+           group = offer_type)) +
+  geom_point() +
+  geom_line()+
+labs(x = "Difficulty",
+       y = "Acceptance Rate")
+```
+# Fitting glm to randomized data
+
+```{r}
+# Run logistic regression
+library(broom)
+results <- glm(Customer_response ~ offer_type,
+                          family = "binomial",
+                          data = data_randomized)
+
+summary(results)
+```
+
+# Deviance residual plot
+```{r}
+plot( residuals(results, type="deviance") ~ predict(results, type="response"), 
+    xlab=expression(hat(pi)), ylab="Deviance Residual")
+lines(lowess(predict(results, type="response"), residuals(results, type="deviance")), col='red')
+```
+# Interpolation
+
+```{r}
+m<-filter(c,offer_type=="bogo")
+n<-filter(c,offer_type=="discount")
+```
+
+
+```{r}
+
+y_bogo=m$acceptance_rate
+x_bogo=m$difficulty
+x_discount=n$difficulty
+y_discount=n$acceptance_rate
+a=min(c$difficulty)
+b=max(c$difficulty)
+xx=seq(a,b,by=1)
+
+
+```
+
+```{r}
+y_bogo_a=approx(x_bogo,y_bogo,xout=xx, method = "linear",rule=2)$y
+y_discount_a=approx(x_discount,y_discount,xout=xx, method = "linear",rule=2)$y
+
+```
+
+```{r}
+offer_type<-rep("bogo",16)
+acceptance_rate<-y_bogo_a
+difficulty<-xx
+df1<-data.frame(offer_type,difficulty,acceptance_rate)
+```
+```{r}
+offer_type<-rep("discount",16)
+acceptance_rate<-y_discount_a
+difficulty<-xx
+df2<-data.frame(offer_type,difficulty,acceptance_rate)
+df<-rbind(df1,df2)
+```
+
+# Profile plot after interpolation
+```{r}
+ggplot(df,
+       aes(x = difficulty,
+           y = acceptance_rate,
+           color = offer_type,
+           group = offer_type)) +
+  geom_point() +
+  geom_line()+
+labs(x = "Difficulty",
+       y = "Acceptance Rate")
+```
+
+
+# Fitting linear model 3 times to find interaction
+
+```{r}
+anova(lm(acceptance_rate~offer_type,data=df))
+```
+
+```{r}
+anova(lm(acceptance_rate~offer_type+difficulty,data=df))
+```
+
+```{r}
+anova(lm(acceptance_rate~offer_type+difficulty+offer_type*difficulty,data=df))
+```
+
+
+# Chi-square Test
+
+H0: Number of customers accepted BOGO offer = Number of customers accepted Discount Offer
+Ha: Number of customers accepted BOGO Offer != Number of customers accepted Discount Offer
+
+
+```{r}
+data_1<-data[,c('offer_type','Customer_response')]
+data_1
+table(data_1$offer_type,data_1$Customer_response)
+
+chisq.test(data_1$offer_type,data_1$Customer_response)
+
+```
+
+```{r}
+
+data_2<-data%>%filter(offer_type=='bogo')
+data_2<-data_2[,c('difficulty','Customer_response')]
+data_2
+table(data_2$difficulty,data_2$Customer_response)
+
+chisq.test(data_2$difficulty,data_2$Customer_response)
+
+```
+```{r}
+data_3<-data%>%filter(offer_type=='discount')
+data_3<-data_3[,c('difficulty','Customer_response')]
+data_3
+table(data_3$difficulty,data_3$Customer_response)
+
+chisq.test(data_3$difficulty,data_3$Customer_response)
+
+```
